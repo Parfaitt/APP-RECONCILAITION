@@ -13,7 +13,7 @@ from streamlit_extras.stylable_container import stylable_container
 import plotly.figure_factory as ff
 from utils.helpers import metric_card
 
-class WaveciPayinProcessor:
+class ifuturPayinProcessor:
     def __init__(self, data_file, partner_file):
         self.data_file = data_file
         self.partner_file = partner_file
@@ -41,8 +41,7 @@ class WaveciPayinProcessor:
         pmt = self.load_file(self.data_file)
         dfop = self.load_file(self.partner_file)
         
-        # traitement mtnci payin
-        
+        # traitement  pour PMT
         def extractday(dated):
             parts=dated.split(' ')
             return parts[0]
@@ -54,6 +53,7 @@ class WaveciPayinProcessor:
                 'created_at': 'Created Date',
                 'payment_date': 'Payment Date',
                 'operator': 'Operator',
+                'external_transaction_id':'External Transaction Id',
                 'merchant_name': 'Merchant Name',
                 'transaction_id': 'Transaction ID',
                 'id_operator': 'ID Opérateur',
@@ -66,51 +66,49 @@ class WaveciPayinProcessor:
             })
         
         dfpmt['Phone Number'] = dfpmt['Phone Number'].astype(object)
-        
+        ts= dfop.loc[(dfop['status'] == 'succeeded')]
         # --- Nettoyage & transformation CHEZ LE PARTENAIRE-------------------------------
         def extractdays(dateds):
             parts=dateds.split(' ')
             return parts[0]
-        dfop['DateCourte']= dfop['Horodatage'].apply(extractdays)
-        
-        
-        payin= dfop.loc[(dfop['Type de transaction'] == 'api_checkout')]
+        dfop['Date']= dfop['created_at'].apply(extractdays)
+        dfop["amount"] = pd.to_numeric(dfop["amount"], errors="coerce")
+        dfop["fees"] = pd.to_numeric(dfop["fees"], errors="coerce")
+        dfop['Taux(%)']=(dfop["fees"] / dfop["amount"])*100
 
-        
          # Calcul des KPI------------------------------------
         
          # Calcul des KPI-----------------------------------------
         
         #MISE EN PLACE DE RECHERCHE X POUR RECUPERATION CHEZ LE PARTENAIRE
         # Supprimer les doublons en conservant la première occurrence
-        payin = payin.drop_duplicates(subset='Référence client')
+        dfop_unique = dfop.drop_duplicates(subset='external_reference')
         
         # Vérification des correspondances entre A1 et B1
-        #correspondance_statut_op= payin.set_index('Externalid')['Status']
-        correspondance_date_op = payin.set_index('Référence client')['DateCourte']
-        correspondance_idoperator = payin.set_index('Référence client')['Identifiant de session API']
+        correspondance_statut_op = dfop_unique.set_index('external_reference')['status']
+        correspondance_date_op = dfop_unique.set_index('external_reference')['Date'].astype(object)
+        correspondance_idoperator = dfop_unique.set_index('external_reference')['reference']
+        correspondance_operator = dfop_unique.set_index('external_reference')['payment_method']
         
-        
+        # Utilisation de map pour ajouter les colonnes correspondantes à dfpmt
         dfpmt['DATEOP'] = dfpmt['Transaction ID'].map(correspondance_date_op)
-        #dfpmt['STATUTOP'] = dfpmt['Transaction ID'].map(correspondance_statut_op)
+        dfpmt['STATUTOP'] = dfpmt['Transaction ID'].map(correspondance_statut_op)
         dfpmt['IDOPERATOR'] = dfpmt['Transaction ID'].map(correspondance_idoperator)
-                
+        dfpmt['OPERATOR'] = dfpmt['Transaction ID'].map(correspondance_operator)
         
         # Définir les taux de commission pour chaque opérateur
-        dfpmt['Fraisop'] = dfpmt['Montant'] * 0.01
-        dfpmt['FraisPmt'] = dfpmt['Fee amount'] - dfpmt['Fraisop']
-        dfpmt['Tauxop']=dfpmt['Fraisop'] / dfpmt['Montant']
-        payin['Tauxop']=payin['Frais'] / payin['Montant']
 
-        payin['Net']=payin['Montant'] + payin['Frais']
+        # Fonction pour calculer les frais d'opérateur
+        
+        ts= dfop.loc[(dfop['status'] == 'succeeded')]
         
         
         #NBSI PMT &CINETPAY
-        dfpmt['WAVE'] = dfpmt['Transaction ID'].isin(payin['Référence client']).astype(int)
-        payin['PMT'] = payin['Référence client'].isin(dfpmt['Transaction ID']).astype(int)
+        dfpmt['IFUTUR'] = dfpmt['Transaction ID'].isin(ts['external_reference']).astype(int)
+        ts['PMT'] = ts['external_reference'].isin(dfpmt['Transaction ID']).astype(int)
 
         dfpmt['Nombre']= dfpmt['Montant']
-        payin['Nombre']= payin['Montant']
+        ts['Nombre']= ts['amount']
 
         # --- Création des onglets ---
 
@@ -121,7 +119,8 @@ class WaveciPayinProcessor:
            # ==================================
         with tabs[0]:
             st.subheader("Vue Globale")
-            #Sélecteur de période
+            #Nouveau: Sélecteur de période
+
             montant_total = dfpmt["Montant"].sum()
             nombre_transaction = dfpmt['Transaction ID'].count()
             taux_succes = (dfpmt[dfpmt['Statut'] == 'SUCCESS'].shape[0] / nombre_transaction) * 100
@@ -162,70 +161,66 @@ class WaveciPayinProcessor:
         # ================================
     # Onglet 2  : Opérations
 # ================================
-
+        df_filteredpmt = dfpmt[dfpmt['IFUTUR'] == 1]   
         with tabs[1]:
-            
-            st.subheader("Rapport Reconciliation WAVE CI PAYIN")
-            df_filteredpmt = dfpmt[dfpmt['WAVE'] == 1]
-            
-            # Nouveau: Métriques de réconciliation
-            matched = df_filteredpmt['WAVE'].sum()
+            st.subheader("Rapport Reconciliation Ifutur Payin")
+            matched = df_filteredpmt['IFUTUR'].sum()
             unmatched = len(dfpmt) - matched
             reconciliation_rate = (matched / len(dfpmt)) * 100
             maj=df_filteredpmt[(df_filteredpmt['Statut']=='FAILED') | (df_filteredpmt['Statut']=='PENDING')]
             nbre_maj=maj['Transaction ID'].count()
             
-            col1, col2, col3,col4 = st.columns(4)
+            col1, col2, col3, col4= st.columns(4)
             col2.metric("Transactions Matchées", matched, delta=f"{reconciliation_rate:.1f}%")
             col3.metric("Nombre transaction MAJ", nbre_maj)
             col4.metric("Transactions Non Matchées", unmatched)
             col1.metric("Total Transactions", len(dfpmt))
             # Création du tableau croisé dynamique
-            df_filteredpmt = dfpmt[dfpmt['WAVE'] == 1]
-        # Création du tableau croisé dynamique
-            tcdpmt = pd.pivot_table(
-            df_filteredpmt,
-            values=['Montant', 'Nombre','Fraisop', 'FraisPmt'],
-            index=['DATEOP','Statut'],
-            aggfunc={'Nombre': 'count','Montant': 'sum' ,'Fraisop': 'sum', 'FraisPmt': 'sum' },
-            fill_value=0,
-            margins=True,
-            margins_name='Total'
-        )
-            # Création du tableau croisé dynamique
-            df_filtered = payin[(payin['PMT'] == 1) | (payin['PMT'] == 0)]
+            df_filtered = ts[(ts['PMT'] == 1) | (ts['PMT'] == 0)]
 
         # Création du tableau croisé dynamique
-            tcdwave = pd.pivot_table(
-            df_filtered,
-            values=['Nombre', 'Net'],
-            index=['DateCourte'],
-            aggfunc={'Nombre': 'count','Net': 'sum' },
+            df_filteredpmt = dfpmt[dfpmt['IFUTUR'] == 1] 
+            tcdpmt = pd.pivot_table(
+            df_filteredpmt,
+            values=['Montant', 'Nombre'],
+            index=['DATEOP','Statut'],
+            aggfunc={'Nombre': 'count','Montant': 'sum' },
             fill_value=0,
             margins=True,
             margins_name='Total'
         )
+
+            tcdpartner = pd.pivot_table(
+            df_filtered,
+            values=['Nombre', 'amount'],
+            index=['Date','status'],
+            aggfunc={'Nombre': 'count','amount': 'sum' },
+            fill_value=0,
+            margins=True,
+            margins_name='Total'
+                
+        )
+            
             tab1, tab2, tab3, tab4 = st.tabs(["Données PMT", "Données Partenaire", "TCD PMT", "TCD Partenaire"])
             
             with tab1:
                 st.write(dfpmt)
                 
             with tab2:
-                st.write(payin)
+                st.write(dfop)
                 
             with tab3:
                 st.write(tcdpmt)
                 
             with tab4:
-                st.write(tcdwave)
-            
+                st.write(tcdpartner)
             # LES TRANSACTIONS A METTRE A JOUR
             
-            maj_failed_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'FAILED') & (dfpmt['WAVE'] == 1)]
-            maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['WAVE'] == 1)]
-            trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['WAVE'] == 0)]
-            trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['WAVE'] == 0)]
-            trx_succes_cinetpay_abs_pmt = payin.loc[(payin['PMT'] == 0)]
+            maj_failed_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'FAILED') & (dfpmt['IFUTUR'] == 1)]
+            maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['IFUTUR'] == 1)]
+            trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['IFUTUR'] == 0)]
+            trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['IFUTUR'] == 0)]
+            trx_succes_cinetpay_abs_pmt = ts.loc[(ts['status']=='succeeded') & (ts['PMT'] == 0)]
             select_marchand=df_filteredpmt.groupby(['Pays','Merchant Name','Operator']).agg(
                 Nombre=('Montant', 'count'),
                 Volume_transaction=('Montant','sum')
@@ -233,12 +228,9 @@ class WaveciPayinProcessor:
             
             select_country_marchand_statut = df_filteredpmt.groupby(['Pays']).agg(
                 Nombre=('Montant', 'count'),
-                Volume=('Montant', 'sum')
-            )
-            
+                Volume=('Montant', 'sum'))
 
-            refound=dfop[dfop['Type de transaction']=='api_payout_reversal']
-            recouvrement=dfop[dfop['Type de transaction']=='agent_transaction']
+            
             
             st.subheader("🔴 Transactions failed à mettre à jour en SUCCESS")
             st.write(maj_failed_a_succes)
@@ -249,22 +241,17 @@ class WaveciPayinProcessor:
             st.subheader("🔵 Transactions en attente PMT absentes chez partenaire")
             st.write(trx_en_attente_abs)
             
-            st.subheader("🟢 Transactions SUCCES absentes chez partenaire")
+            st.subheader("🟠 Transactions SUCCES partenaire absentes PMT")
             st.write(trx_succes_cinetpay_abs_pmt)
             
-            st.subheader("🟠 Transactions SUCCES partenaire absentes PMT")
+            st.subheader("🟢 Transactions SUCCES absentes chez partenaire")
             st.write(trx_succes_abs)
             
             st.subheader("🟤 TRANSACTION PAR OPERATEUR ET MARCHAND")
             st.write(select_marchand)
 
-            st.subheader("🟩 RETOUR DE FONDS (REFOUND)")
-            st.write(refound)
             
-            st.subheader("📊🔵 RECOUVREMENT")
-            st.write(recouvrement)
-            
-            st.subheader("🔵 TRANSACTION PAR OPERATEUR ET PAYS")
+            st.subheader("📊🔵 TRANSACTION PAR OPERATEUR ET PAYS")
             st.write(select_country_marchand_statut)
         
         with tabs[2]:
@@ -286,6 +273,7 @@ class WaveciPayinProcessor:
                 fig_month.update_layout(height=330, margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig_month, use_container_width=True, config={"displayModeBar": False})
 
+        
         with tabs[3]:
             st.subheader("Analytics Avancés")
             

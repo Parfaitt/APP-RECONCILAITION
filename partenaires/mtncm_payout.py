@@ -13,7 +13,7 @@ from streamlit_extras.stylable_container import stylable_container
 import plotly.figure_factory as ff
 from utils.helpers import metric_card
 
-class WaveciPayinProcessor:
+class MtncmPayoutProcessor:
     def __init__(self, data_file, partner_file):
         self.data_file = data_file
         self.partner_file = partner_file
@@ -71,46 +71,57 @@ class WaveciPayinProcessor:
         def extractdays(dateds):
             parts=dateds.split(' ')
             return parts[0]
-        dfop['DateCourte']= dfop['Horodatage'].apply(extractdays)
+        dfop['DateCourte']= dfop['Date'].apply(extractdays)
+        transfer= dfop.loc[(dfop['Type'] == 'Transfer') & (dfop['From name'] == 'PAYMETRUST Deposit')]
         
-        
-        payin= dfop.loc[(dfop['Type de transaction'] == 'api_checkout')]
+        dfmtn=dfop[['Id',
+           'External id',
+           'Date',
+           'Status',
+           'Type',
+           'Amount',
+           'From / Fee',
+           'Currency.14',
+           'From name',
+           'To message',
+           'From handler name',
+           'DateCourte'
+            ]]
 
-        
-         # Calcul des KPI------------------------------------
-        
-         # Calcul des KPI-----------------------------------------
+        dfmtn['Amount'].replace(['-'], [''])
+        transfer= dfmtn.loc[(dfmtn['Type'] == 'Transfer') & (dfmtn['From name'] == 'PAYMETRUST Deposit')]
         
         #MISE EN PLACE DE RECHERCHE X POUR RECUPERATION CHEZ LE PARTENAIRE
         # Supprimer les doublons en conservant la première occurrence
-        payin = payin.drop_duplicates(subset='Référence client')
+        
+        dfmtn = dfop.drop_duplicates(subset='External id')
         
         # Vérification des correspondances entre A1 et B1
-        #correspondance_statut_op= payin.set_index('Externalid')['Status']
-        correspondance_date_op = payin.set_index('Référence client')['DateCourte']
-        correspondance_idoperator = payin.set_index('Référence client')['Identifiant de session API']
+        correspondance_statut_op= dfmtn.set_index('External id')['Status']
+        correspondance_date_op = dfmtn.set_index('External id')['DateCourte']
+        correspondance_idoperator = dfmtn.set_index('External id')['Id']
         
         
         dfpmt['DATEOP'] = dfpmt['Transaction ID'].map(correspondance_date_op)
-        #dfpmt['STATUTOP'] = dfpmt['Transaction ID'].map(correspondance_statut_op)
+        dfpmt['STATUTOP'] = dfpmt['Transaction ID'].map(correspondance_statut_op)
         dfpmt['IDOPERATOR'] = dfpmt['Transaction ID'].map(correspondance_idoperator)
                 
         
         # Définir les taux de commission pour chaque opérateur
-        dfpmt['Fraisop'] = dfpmt['Montant'] * 0.01
+        dfpmt['Fraisop'] = dfpmt['Montant'] * 0.001
         dfpmt['FraisPmt'] = dfpmt['Fee amount'] - dfpmt['Fraisop']
         dfpmt['Tauxop']=dfpmt['Fraisop'] / dfpmt['Montant']
-        payin['Tauxop']=payin['Frais'] / payin['Montant']
-
-        payin['Net']=payin['Montant'] + payin['Frais']
+        dfmtn['Tauxop']=dfmtn['From / Fee'] / dfmtn['Amount']
+        dfmtn['Rev_PMT']=dfmtn['Amount'] - dfmtn['From / Fee']
+        transfer['Rev_PMT']=-(transfer['Amount'] + transfer['From / Fee'])
         
         
         #NBSI PMT &CINETPAY
-        dfpmt['WAVE'] = dfpmt['Transaction ID'].isin(payin['Référence client']).astype(int)
-        payin['PMT'] = payin['Référence client'].isin(dfpmt['Transaction ID']).astype(int)
+        dfpmt['MTNCM'] = dfpmt['Transaction ID'].isin(transfer['External id']).astype(int)
+        transfer['PMT'] = transfer['External id'].isin(dfpmt['Transaction ID']).astype(int)
 
         dfpmt['Nombre']= dfpmt['Montant']
-        payin['Nombre']= payin['Montant']
+        transfer['Nombre']= transfer['Amount']
 
         # --- Création des onglets ---
 
@@ -160,19 +171,19 @@ class WaveciPayinProcessor:
             st.plotly_chart(fig, use_container_width=True)
             
         # ================================
-    # Onglet 2  : Opérations
-# ================================
+               # Onglet 2  : Rapport Reconciliation
+        # ================================
 
         with tabs[1]:
             
-            st.subheader("Rapport Reconciliation WAVE CI PAYIN")
-            df_filteredpmt = dfpmt[dfpmt['WAVE'] == 1]
+            st.subheader("Rapport Reconciliation MTNCM PAYOUT")
+            df_filteredpmt = dfpmt[dfpmt['MTNCM'] == 1]
             
             # Nouveau: Métriques de réconciliation
-            matched = df_filteredpmt['WAVE'].sum()
+            matched = df_filteredpmt['MTNCM'].sum()
             unmatched = len(dfpmt) - matched
             reconciliation_rate = (matched / len(dfpmt)) * 100
-            maj=df_filteredpmt[(df_filteredpmt['Statut']=='FAILED') | (df_filteredpmt['Statut']=='PENDING')]
+            maj=df_filteredpmt[(df_filteredpmt['Statut']=='PENDING')]
             nbre_maj=maj['Transaction ID'].count()
             
             col1, col2, col3,col4 = st.columns(4)
@@ -181,7 +192,7 @@ class WaveciPayinProcessor:
             col4.metric("Transactions Non Matchées", unmatched)
             col1.metric("Total Transactions", len(dfpmt))
             # Création du tableau croisé dynamique
-            df_filteredpmt = dfpmt[dfpmt['WAVE'] == 1]
+            df_filteredpmt = dfpmt[dfpmt['MTNCM'] == 1]
         # Création du tableau croisé dynamique
             tcdpmt = pd.pivot_table(
             df_filteredpmt,
@@ -193,14 +204,14 @@ class WaveciPayinProcessor:
             margins_name='Total'
         )
             # Création du tableau croisé dynamique
-            df_filtered = payin[(payin['PMT'] == 1) | (payin['PMT'] == 0)]
+            df_filtered = transfer[(transfer['PMT'] == 1) | (transfer['PMT'] == 0)]
 
         # Création du tableau croisé dynamique
-            tcdwave = pd.pivot_table(
+            tcdmtncm = pd.pivot_table(
             df_filtered,
-            values=['Nombre', 'Net'],
-            index=['DateCourte'],
-            aggfunc={'Nombre': 'count','Net': 'sum' },
+            values=['Nombre', 'Amount'],
+            index=['DateCourte','Status'],
+            aggfunc={'Nombre': 'count','Amount': 'sum'},
             fill_value=0,
             margins=True,
             margins_name='Total'
@@ -211,21 +222,21 @@ class WaveciPayinProcessor:
                 st.write(dfpmt)
                 
             with tab2:
-                st.write(payin)
+                st.write(dfmtn)
                 
             with tab3:
                 st.write(tcdpmt)
                 
             with tab4:
-                st.write(tcdwave)
+                st.write(tcdmtncm)
             
             # LES TRANSACTIONS A METTRE A JOUR
             
-            maj_failed_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'FAILED') & (dfpmt['WAVE'] == 1)]
-            maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['WAVE'] == 1)]
-            trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['WAVE'] == 0)]
-            trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['WAVE'] == 0)]
-            trx_succes_cinetpay_abs_pmt = payin.loc[(payin['PMT'] == 0)]
+            maj_failed_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'FAILED') & (dfpmt['MTNCM'] == 1)]
+            maj_pending_a_succes = dfpmt.loc[(dfpmt['Statut'] == 'PENDING') & (dfpmt['MTNCM'] == 1)]
+            trx_succes_abs = dfpmt.loc[(dfpmt['Statut'] == 'SUCCESS') & (dfpmt['MTNCM'] == 0)]
+            trx_en_attente_abs= dfpmt.loc[(dfpmt['Statut']=='PENDING') & (dfpmt['MTNCM'] == 0)]
+            trx_succes_cinetpay_abs_pmt = transfer.loc[(transfer['Status']=='Successful') & (transfer['PMT'] == 0)]
             select_marchand=df_filteredpmt.groupby(['Pays','Merchant Name','Operator']).agg(
                 Nombre=('Montant', 'count'),
                 Volume_transaction=('Montant','sum')
@@ -235,12 +246,15 @@ class WaveciPayinProcessor:
                 Nombre=('Montant', 'count'),
                 Volume=('Montant', 'sum')
             )
-            
 
-            refound=dfop[dfop['Type de transaction']=='api_payout_reversal']
-            recouvrement=dfop[dfop['Type de transaction']=='agent_transaction']
-            
-            st.subheader("🔴 Transactions failed à mettre à jour en SUCCESS")
+            appro= dfmtn.loc[(dfmtn['Type'] == 'Transfer') & (dfmtn['From name'] == 'PAYMETRUST Payment')]
+            #recouvrement=dfmtn[dfmtn['Type']=='Transfer to any bank account']
+            '''
+            solde=debit.groupby(['DateCourte','Rev_PMT']).agg(
+                nombre=('Rev_PMT','count'),
+                volume=('Rev_PMT','sum'))
+            '''
+            st.subheader("🔴 Pertes")
             st.write(maj_failed_a_succes)
             
             st.subheader("🟡 Transactions PENDING à mettre à jour en SUCCESS")
@@ -249,24 +263,27 @@ class WaveciPayinProcessor:
             st.subheader("🔵 Transactions en attente PMT absentes chez partenaire")
             st.write(trx_en_attente_abs)
             
-            st.subheader("🟢 Transactions SUCCES absentes chez partenaire")
+            st.subheader("🟢 Transactions SUCCES absentes chez PMT")
             st.write(trx_succes_cinetpay_abs_pmt)
             
-            st.subheader("🟠 Transactions SUCCES partenaire absentes PMT")
+            st.subheader("🟠 Transactions SUCCES PMT absentes Partenaire")
             st.write(trx_succes_abs)
             
             st.subheader("🟤 TRANSACTION PAR OPERATEUR ET MARCHAND")
             st.write(select_marchand)
 
-            st.subheader("🟩 RETOUR DE FONDS (REFOUND)")
-            st.write(refound)
-            
-            st.subheader("📊🔵 RECOUVREMENT")
-            st.write(recouvrement)
+            st.subheader("🟩 APPRO PAYIN VERS PAYOUT")
+            st.write(appro)
+        
+            #st.subheader("📊🔵 SOLDE")
+            #st.write(solde)
             
             st.subheader("🔵 TRANSACTION PAR OPERATEUR ET PAYS")
             st.write(select_country_marchand_statut)
-        
+            
+        #---------------------------------------
+        # Onglet 3 Rapport
+        #---------------------------------------
         with tabs[2]:
             st.subheader('Vue globale par Statut')
             chart1, chart2= st.columns((2))
@@ -286,6 +303,10 @@ class WaveciPayinProcessor:
                 fig_month.update_layout(height=330, margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig_month, use_container_width=True, config={"displayModeBar": False})
 
+
+        #-------------------------
+        #Onglet 4 Analytics Avancés
+        #----------------------------
         with tabs[3]:
             st.subheader("Analytics Avancés")
             

@@ -41,7 +41,7 @@ class BizaoPayinProcessor:
         pmt = self.load_file(self.data_file)
         dfop = self.load_file(self.partner_file)
         
-        # Votre code de traitement existant pour Cinetpay
+        # traitement  pour PMT
         def extractday(dated):
             parts=dated.split(' ')
             return parts[0]

@@ -67,7 +67,27 @@ class OmbfPayinProcessor:
         dfpmt['Phone Number'] = dfpmt['Phone Number'].astype(object)
         ts= dfop.loc[(dfop['TRANSFER_STATUS'] == 'TS')]
         # --- Nettoyage & transformation CHEZ LE PARTENAIRE-------------------------------
+
+        def dat(x):
+            parts=x.split('/')
+            return parts[1]
+        dfop['month']=dfop['TRANSFER_DATE'].apply(dat)
         
+        def compa(cpm):
+            parts=cpm.split(' ')
+            return parts[0]
+        dfop['cpm']=dfop['REMARKS'].apply(compa)
+
+        def rev(trx):
+            part=trx.split(' ')
+            return part[1]
+        dfop['revsmt']=dfop['REMARKS'].apply(rev)
+
+        mvtcompte=dfop[(dfop['REMARKS']!='OTP Cashout') & (dfop['month']=='06')]
+        mvtcompte.groupby(['REMARKS','TRANSFER_STATUS']).agg(
+        Nombre=('DEBIT', 'count'),
+        Volume=('DEBIT', 'sum'))
+
          # Calcul des KPI------------------------------------
         
          # Calcul des KPI-----------------------------------------
@@ -156,7 +176,7 @@ class OmbfPayinProcessor:
 # ================================
 
         with tabs[1]:
-            st.subheader("Rapport Reconciliation")
+            st.subheader("Rapport Reconciliation OMBF PAYIN")
             
             # Création du tableau croisé dynamique
             df_filteredpmt = dfpmt[dfpmt['OMBF'] == 1]
@@ -243,6 +263,9 @@ class OmbfPayinProcessor:
             
             st.subheader("🟤 TRANSACTION PAR OPERATEUR ET MARCHAND")
             st.write(select_marchand)
+
+            st.subheader("🟤 MOUVEMENT SUR LE COMPTE")
+            st.write(mvtcompte)
             
             st.subheader("📊🔵 TRANSACTION PAR OPERATEUR ET PAYS")
             st.write(select_country_marchand_statut)

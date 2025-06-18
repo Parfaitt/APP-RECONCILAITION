@@ -13,6 +13,7 @@ from streamlit_extras.stylable_container import stylable_container
 import plotly.figure_factory as ff
 from utils.helpers import metric_card
 
+
 class CinetpayPayinProcessor:
     def __init__(self, data_file, partner_file):
         self.data_file = data_file
@@ -136,6 +137,8 @@ class CinetpayPayinProcessor:
         dfpmt['REFUSED'] = dfpmt['Transaction ID'].isin(refused['ID transaction']).astype(int)
         
         df_filtered = dfcinetpay[(dfcinetpay['PMT'] == 1) | (dfcinetpay['PMT'] == 0)]
+
+        
 
         # --- Création des onglets ---
 
@@ -269,10 +272,10 @@ class CinetpayPayinProcessor:
             st.subheader("🔵 Transactions en attente PMT absentes chez partenaire")
             st.write(trx_en_attente_abs)
             
-            st.subheader("🟢 Transactions SUCCES absentes chez partenaire")
+            st.subheader("🟢 Transactions SUCCES absentes chez PMT")
             st.write(trx_succes_cinetpay_abs_pmt)
             
-            st.subheader("🟠 Transactions SUCCES partenaire absentes PMT")
+            st.subheader("🟠 Transactions SUCCES absentes partenaire")
             st.write(trx_succes_abs)
             
             st.subheader("TRANSACTION PAR OPERATEUR ET MARCHAND")
@@ -327,6 +330,9 @@ class CinetpayPayinProcessor:
                              labels={'x': 'Heure', 'y': 'Montant'})
                 st.plotly_chart(fig, use_container_width=True)
             
-            
+# 
+
+
+
         
         #Processed Cinetpay payin fin-

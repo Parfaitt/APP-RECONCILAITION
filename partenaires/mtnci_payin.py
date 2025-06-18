@@ -261,10 +261,10 @@ class MtnciPayinProcessor:
             st.subheader("🔵 Transactions en attente PMT absentes chez partenaire")
             st.write(trx_en_attente_abs)
             
-            st.subheader("🟢 Transactions SUCCES absentes chez partenaire")
+            st.subheader("🟢 Transactions SUCCES partenaire absentes chez PMT")
             st.write(trx_succes_cinetpay_abs_pmt)
             
-            st.subheader("🟠 Transactions SUCCES partenaire absentes PMT")
+            st.subheader("🟠 Transactions SUCCES PMT absentes partenaire")
             st.write(trx_succes_abs)
             
             st.subheader("🟤 TRANSACTION PAR OPERATEUR ET MARCHAND")
